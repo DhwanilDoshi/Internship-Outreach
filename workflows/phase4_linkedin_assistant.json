@@ -1,0 +1,180 @@
+{
+  "name": "Phase 4 — LinkedIn Note Generator (Manual URL Lookup)",
+  "nodes": [
+    {
+      "id": "p4-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [100, 300],
+      "parameters": {}
+    },
+    {
+      "id": "p4-read",
+      "name": "Read All Sheet Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [320, 300],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Internship_Outreach",
+          "mode": "name"
+        },
+        "filtersUI": {},
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "p4-filter",
+      "name": "Filter: Has LinkedIn URL, No Note Yet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300],
+      "parameters": {
+        "jsCode": "// User manually fills linkedin_url after googling.\n// This node generates the connection note for those rows.\nconst items = $input.all();\nconst filtered = items.filter(item => {\n  const d = item.json;\n  const status = (d.reply_status || '').trim().toLowerCase();\n  const email  = (d.email        || '').trim();\n  const name   = (d.contact_name || '').trim();\n  const liUrl  = (d.linkedin_url || '').trim();\n  const liNote = (d.linkedin_note || '').trim();\n\n  // Sent emails that have a manually-added LinkedIn URL but no note yet\n  return status === 'sent' && email !== '' && name !== '' && liUrl !== '' && liNote === '';\n});\nconsole.log(`[Filter] ${filtered.length} rows ready for note generation`);\nif (filtered.length === 0) return [];\nreturn filtered;"
+      }
+    },
+    {
+      "id": "p4-split",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [760, 300],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "p4-wait",
+      "name": "Wait 3s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [980, 300],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 3,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "p4-build-prompt",
+      "name": "Build Connection Note Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const data = $json;\n\nconst emailBody = (data.email_body_A && data.email_body_A.trim())\n  ? data.email_body_A.trim()\n  : (data.email_body_B || data.email_body || '').trim();\n\nconst prompt = [\n  'You are writing a LinkedIn connection request note for Dhwanil (ECE student at SCET, Surat).',\n  '',\n  'STRICT RULES:',\n  '1. 280 characters MAXIMUM (LinkedIn hard limit) — count every char including spaces and signature.',\n  '2. Casual but professional tone.',\n  '3. Reference ONE specific concrete detail from the email body (product, technology, mission).',\n  '4. BANNED: innovative, exciting, opportunity, passionate, synergy, leverage, disruptive, thrilled, keen, eager.',\n  '5. End EXACTLY with: — Dhwanil, ECE student at SCET, Surat',\n  '6. Open with: Hi [FirstName],',\n  '7. Should feel like a natural follow-up to the email already sent.',\n  '',\n  'CONTEXT:',\n  'Recipient: ' + data.contact_name,\n  'Company: ' + data.company_name,\n  'LinkedIn: ' + (data.linkedin_url || 'not found'),\n  '',\n  'Email already sent:',\n  '---',\n  emailBody,\n  '---',\n  '',\n  'Example: \"Hi Sara, just emailed you about Maritime Fusion\\'s marine propulsion work — fascinating constraint to design around. Would love to stay connected. — Dhwanil, ECE student at SCET, Surat\"',\n  '',\n  'Return ONLY: {\"linkedin_note\": \"<your note here>\"}'\n].join('\\n');\n\nreturn {\n  json: {\n    ...data,\n    _ai_request: {\n      model: 'gpt-4o-mini',\n      messages: [{ role: 'user', content: prompt }],\n      response_format: { type: 'json_object' },\n      max_tokens: 250,\n      temperature: 0.72\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "p4-call-openai",
+      "name": "Call OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1420, 300],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_OPENAI_API_KEY" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json._ai_request }}",
+        "options": { "timeout": 30000 }
+      }
+    },
+    {
+      "id": "p4-parse",
+      "name": "Parse Note",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1640, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const response = $json;\nconst source = $('Build Connection Note Prompt').item.json;\n\nlet linkedinNote = '';\n\ntry {\n  let content = response?.choices?.[0]?.message?.content || '';\n  content = content.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n  const parsed = JSON.parse(content);\n  linkedinNote = (parsed.linkedin_note || '').trim();\n\n  if (linkedinNote.length > 280) linkedinNote = linkedinNote.substring(0, 280);\n\n  // Formula injection guard\n  if (['=','+','-','@'].includes(linkedinNote[0])) {\n    linkedinNote = linkedinNote.substring(1);\n  }\n\n  console.log(`[Note] ${source.contact_name}: ${linkedinNote.length} chars`);\n} catch (e) {\n  console.log(`[Note] Parse failed: ${e.message}`);\n  linkedinNote = '';\n}\n\nreturn {\n  json: {\n    email:         source.email,\n    linkedin_url:  source.linkedin_url,\n    linkedin_note: linkedinNote\n  }\n};"
+      }
+    },
+    {
+      "id": "p4-update",
+      "name": "Update Sheet Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1860, 300],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Internship_Outreach",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "email":         "={{ $json.email }}",
+            "linkedin_url":  "={{ $json.linkedin_url }}",
+            "linkedin_note": "={{ $json.linkedin_note }}"
+          },
+          "matchingColumns": ["email"]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": { "main": [[{ "node": "Read All Sheet Rows", "type": "main", "index": 0 }]] },
+    "Read All Sheet Rows": { "main": [[{ "node": "Filter: Has LinkedIn URL, No Note Yet", "type": "main", "index": 0 }]] },
+    "Filter: Has LinkedIn URL, No Note Yet": { "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]] },
+    "Split In Batches": {
+      "main": [
+        [{ "node": "Wait 3s", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Wait 3s": { "main": [[{ "node": "Build Connection Note Prompt", "type": "main", "index": 0 }]] },
+    "Build Connection Note Prompt": { "main": [[{ "node": "Call OpenAI", "type": "main", "index": 0 }]] },
+    "Call OpenAI": { "main": [[{ "node": "Parse Note", "type": "main", "index": 0 }]] },
+    "Parse Note": { "main": [[{ "node": "Update Sheet Row", "type": "main", "index": 0 }]] },
+    "Update Sheet Row": { "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "id": "phase4-linkedin-note-v2"
+}

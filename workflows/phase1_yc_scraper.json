@@ -1,0 +1,248 @@
+{
+  "name": "Phase 1 — YC Scraper + Hunter.io Email Finder",
+  "nodes": [
+    {
+      "id": "node-sched-001",
+      "name": "Schedule: Tue/Wed/Thu 10AM IST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 4 * * 2,3,4"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-fetch-w25",
+      "name": "Fetch YC W25 Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 180],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.ycombinator.com/v0.1/companies?batch=W25&page=1&per_page=100",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-fetch-s25",
+      "name": "Fetch YC S25 Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 420],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.ycombinator.com/v0.1/companies?batch=S25&page=1&per_page=100",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-merge-batches",
+      "name": "Merge YC Batches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [540, 300],
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-process-yc",
+      "name": "Process YC Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300],
+      "parameters": {
+        "jsCode": "// Unwrap YC API response and normalize companies\nconst items = $input.all();\nconst companies = [];\n\nfor (const item of items) {\n  const d = item.json;\n  // YC API wraps results: { companies: [...], page, totalPages }\n  const list = d.companies || [d];\n\n  for (const company of list) {\n    if (!company.website) continue;\n\n    const domain = company.website\n      .toLowerCase()\n      .replace(/^https?:\\/\\//, '')\n      .replace(/^www\\./, '')\n      .replace(/\\/$/, '')\n      .split('/')[0]\n      .split('?')[0];\n\n    if (!domain) continue;\n\n    companies.push({\n      company_name: company.name || '',\n      website: domain,\n      description: (company.one_liner || company.long_description || '').substring(0, 300),\n      batch: company.batch || '',\n      source: 'YC'\n    });\n  }\n}\n\n// Dedupe within this batch\nconst seen = new Set();\nconst unique = companies.filter(c => {\n  if (seen.has(c.website)) return false;\n  seen.add(c.website);\n  return true;\n});\n\nconsole.log(`[Process YC] ${items.length} raw items → ${unique.length} unique companies`);\nreturn [{ json: { companies: unique, total_scraped: unique.length } }];"
+      }
+    },
+    {
+      "id": "node-read-sheet",
+      "name": "Read Existing Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [980, 300],
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Internship_Outreach",
+          "mode": "name"
+        },
+        "filtersUI": {},
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "node-dedup",
+      "name": "Deduplicate Companies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 300],
+      "parameters": {
+        "jsCode": "// Compare scraped companies against existing sheet rows\nconst scrapedCompanies = $('Process YC Data').first().json.companies || [];\n\nconst existingDomains = new Set();\nfor (const item of $input.all()) {\n  const raw = (item.json.website || item.json.Website || '').trim();\n  if (!raw) continue;\n  const domain = raw\n    .toLowerCase()\n    .replace(/^https?:\\/\\//, '')\n    .replace(/^www\\./, '')\n    .replace(/\\/$/, '')\n    .split('/')[0];\n  if (domain) existingDomains.add(domain);\n}\n\nconst newCompanies = scrapedCompanies.filter(c => !existingDomains.has(c.website));\n\nconsole.log(`[Dedup] Scraped: ${scrapedCompanies.length} | In sheet: ${existingDomains.size} | New: ${newCompanies.length}`);\n\nif (newCompanies.length === 0) return [];\nreturn newCompanies.map(company => ({ json: company }));"
+      }
+    },
+    {
+      "id": "node-split",
+      "name": "Split: One Company at a Time",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1420, 300],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "node-wait-rate-limit",
+      "name": "Wait 2s (Sheets Rate Limit)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1640, 300],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 2,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "node-hunter",
+      "name": "Hunter.io Domain Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1860, 300],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.hunter.io/v2/domain-search?domain={{ $json.website }}&api_key=YOUR_HUNTER_API_KEY&limit=5&type=personal",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-format",
+      "name": "Format Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Merge Hunter results with company data\nconst hunterResp = $json;\nconst today = new Date().toISOString().split('T')[0];\n\nconst lead = {\n  company_name: (hunterResp.company_name || hunterResp.data?.organization?.name || '').trim(),\n  website:      (hunterResp.website || hunterResp.domain || hunterResp.data?.domain || '').trim(),\n  source:       'YC',\n  contact_name: '',\n  contact_role: '',\n  email:        '',\n  batch:        hunterResp.batch || '',\n  description:  (hunterResp.description || '').substring(0, 300),\n  reply_status: 'queued',\n  date_added:   today\n};\n\n// Pick best email by confidence\nif (hunterResp.data?.emails?.length > 0) {\n  const best = hunterResp.data.emails\n    .filter(e => (e.confidence || 0) >= 50)\n    .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];\n\n  if (best) {\n    lead.contact_name = (`${best.first_name || ''} ${best.last_name || ''}`).trim();\n    lead.contact_role = best.position || best.seniority || '';\n    lead.email        = best.value || '';\n  }\n}\n\nconsole.log(`[Format Lead] ${lead.company_name} → ${lead.email || '(no email)'}`);\nreturn { json: lead };"
+      }
+    },
+    {
+      "id": "node-append",
+      "name": "Append Lead to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2300, 300],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Internship_Outreach",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company_name": "={{ $json.company_name }}",
+            "website":      "={{ $json.website }}",
+            "source":       "={{ $json.source }}",
+            "contact_name": "={{ $json.contact_name }}",
+            "contact_role": "={{ $json.contact_role }}",
+            "email":        "={{ $json.email }}",
+            "batch":        "={{ $json.batch }}",
+            "description":  "={{ $json.description }}",
+            "reply_status": "={{ $json.reply_status }}",
+            "date_added":   "={{ $json.date_added }}"
+          }
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: Tue/Wed/Thu 10AM IST": {
+      "main": [[
+        { "node": "Fetch YC W25 Batch", "type": "main", "index": 0 },
+        { "node": "Fetch YC S25 Batch", "type": "main", "index": 0 }
+      ]]
+    },
+    "Fetch YC W25 Batch": {
+      "main": [[{ "node": "Merge YC Batches", "type": "main", "index": 0 }]]
+    },
+    "Fetch YC S25 Batch": {
+      "main": [[{ "node": "Merge YC Batches", "type": "main", "index": 1 }]]
+    },
+    "Merge YC Batches": {
+      "main": [[{ "node": "Process YC Data", "type": "main", "index": 0 }]]
+    },
+    "Process YC Data": {
+      "main": [[{ "node": "Read Existing Sheet", "type": "main", "index": 0 }]]
+    },
+    "Read Existing Sheet": {
+      "main": [[{ "node": "Deduplicate Companies", "type": "main", "index": 0 }]]
+    },
+    "Deduplicate Companies": {
+      "main": [[{ "node": "Split: One Company at a Time", "type": "main", "index": 0 }]]
+    },
+    "Split: One Company at a Time": {
+      "main": [
+        [{ "node": "Wait 2s (Sheets Rate Limit)", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Wait 2s (Sheets Rate Limit)": {
+      "main": [[{ "node": "Hunter.io Domain Search", "type": "main", "index": 0 }]]
+    },
+    "Hunter.io Domain Search": {
+      "main": [[{ "node": "Format Lead", "type": "main", "index": 0 }]]
+    },
+    "Format Lead": {
+      "main": [[{ "node": "Append Lead to Sheet", "type": "main", "index": 0 }]]
+    },
+    "Append Lead to Sheet": {
+      "main": [[{ "node": "Split: One Company at a Time", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "id": "phase1-yc-scraper-v2"
+}

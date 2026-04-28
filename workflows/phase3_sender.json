@@ -1,0 +1,206 @@
+{
+  "name": "Phase 3 — Gmail Sender (HTML + Resume Attachment)",
+  "nodes": [
+    {
+      "id": "p3-sched",
+      "name": "Schedule: Tue/Wed/Thu 10AM IST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "30 4 * * 2,3,4" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "p3-read",
+      "name": "Read All Sheet Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [320, 300],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Internship_Outreach",
+          "mode": "name"
+        },
+        "filtersUI": {},
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "p3-filter",
+      "name": "Filter Approved",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300],
+      "parameters": {
+        "jsCode": "// Only send rows with reply_status=approved AND email AND ONE surviving version\nconst items = $input.all();\nconst approved = [];\n\nfor (const item of items) {\n  const d = item.json;\n  if ((d.reply_status || '').trim().toLowerCase() !== 'approved') continue;\n  if (!(d.email || '').trim()) continue;\n\n  // Try A/B columns first, fall back to old single columns\n  const subjectA = (d.email_subject_A || '').trim();\n  const bodyA    = (d.email_body_A    || '').trim();\n  const subjectB = (d.email_subject_B || '').trim();\n  const bodyB    = (d.email_body_B    || '').trim();\n  const subject  = (d.email_subject   || '').trim();\n  const body     = (d.email_body      || '').trim();\n\n  let finalSubject = '', finalBody = '', versionUsed = '';\n\n  if (subjectA && bodyA) { finalSubject = subjectA; finalBody = bodyA; versionUsed = 'A'; }\n  else if (subjectB && bodyB) { finalSubject = subjectB; finalBody = bodyB; versionUsed = 'B'; }\n  else if (subject && body) { finalSubject = subject; finalBody = body; versionUsed = 'old'; }\n  else { console.warn(`[Filter] Skipping ${d.company_name || d.email} — no email content`); continue; }\n\n  approved.push({\n    json: {\n      ...d,\n      final_subject: finalSubject,\n      final_body:    finalBody,\n      _version_used: versionUsed\n    }\n  });\n}\n\nconsole.log(`[Filter] ${approved.length} of ${items.length} ready to send`);\nif (approved.length === 0) return [];\nreturn approved;"
+      }
+    },
+    {
+      "id": "p3-limit",
+      "name": "Limit Daily Send (30 max)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst LIMIT = 30;\nif (items.length > LIMIT) {\n  console.log(`[Daily Limit] Capping ${items.length} → ${LIMIT}`);\n  return items.slice(0, LIMIT);\n}\nconsole.log(`[Daily Limit] ${items.length} queued (under cap)`);\nreturn items;"
+      }
+    },
+    {
+      "id": "p3-split",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [980, 300],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "p3-wait",
+      "name": "Wait 30s (Anti-Spam Pacing)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1200, 300],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 30,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "p3-read-pdf",
+      "name": "Read PDF Attachment",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1420, 300],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "C:\\Users\\YourName\\OneDrive\\Desktop\\N8N\\N8N_runtime\\.n8n-files\\master_resume.pdf",
+        "options": {
+          "dataPropertyName": "attachment"
+        }
+      }
+    },
+    {
+      "id": "p3-send",
+      "name": "Send Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [1640, 300],
+      "continueOnFail": true,
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.final_subject }}",
+        "emailType": "html",
+        "message": "={{ $json.final_body.replace(/\\n/g, '<br>') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              { "property": "attachment" }
+            ]
+          }
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "p3-prep-update",
+      "name": "Prepare Sheet Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1860, 300],
+      "parameters": {
+        "jsCode": "// Gmail's output replaces $json — pull email back from the loop\nconst original = $('Split In Batches').first().json;\nconst today = new Date().toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    email:           original.email || '',\n    reply_status:    'sent',\n    email_sent_date: today\n  }\n}];"
+      }
+    },
+    {
+      "id": "p3-update",
+      "name": "Update Sheet Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2080, 300],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Internship_Outreach",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "email":           "={{ $json.email }}",
+            "reply_status":    "={{ $json.reply_status }}",
+            "email_sent_date": "={{ $json.email_sent_date }}"
+          },
+          "matchingColumns": ["email"]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: Tue/Wed/Thu 10AM IST": { "main": [[{ "node": "Read All Sheet Rows", "type": "main", "index": 0 }]] },
+    "Read All Sheet Rows": { "main": [[{ "node": "Filter Approved", "type": "main", "index": 0 }]] },
+    "Filter Approved": { "main": [[{ "node": "Limit Daily Send (30 max)", "type": "main", "index": 0 }]] },
+    "Limit Daily Send (30 max)": { "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]] },
+    "Split In Batches": {
+      "main": [
+        [{ "node": "Wait 30s (Anti-Spam Pacing)", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Wait 30s (Anti-Spam Pacing)": { "main": [[{ "node": "Read PDF Attachment", "type": "main", "index": 0 }]] },
+    "Read PDF Attachment": { "main": [[{ "node": "Send Gmail", "type": "main", "index": 0 }]] },
+    "Send Gmail": { "main": [[{ "node": "Prepare Sheet Update", "type": "main", "index": 0 }]] },
+    "Prepare Sheet Update": { "main": [[{ "node": "Update Sheet Row", "type": "main", "index": 0 }]] },
+    "Update Sheet Row": { "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "id": "phase3-sender-v2"
+}

@@ -1,0 +1,14 @@
+email,company_name,website,contact_name,contact_role,batch,yc_description,hunter_confidence,hunter_verified,email_subject_A,email_body_A,email_subject_B,email_body_B,reply_status,email_sent_date,linkedin_url,linkedin_note,linkedin_request_sent,website_scraped_text,created_date,drafted_date,reply_received,notes
+justin@maritimefusion.io,Maritime Fusion,https://maritimefusion.io,Justin Waugh,Co-founder,W25,Building inductive power transfer systems for underwater marine vehicles and ROVs,84,TRUE,Maritime Fusion's inductive power transfer work — internship ask,"Hi Justin,
+
+Saw the work Maritime Fusion is doing on contactless power coupling for underwater ROVs — the constraint of maintaining transfer efficiency through seawater is a genuinely hard electromagnetic problem.
+
+I'm Dhwanil, a 2nd-year ECE student at SCET Surat. My coursework is in signals and power electronics. I think I could contribute meaningfully on the electromagnetic modeling side.
+
+Would you be open to a quick call to see if there's a fit for a remote internship?
+
+— Dhwanil Doshi, ECE (2nd year), SCET Surat",Quick ask — Maritime Fusion's underwater power work,"Hi Justin,
+
+Cold-emailing because the inductive coupling approach for ROV power is exactly the kind of EM problem I've been digging into. I'm a 2nd-year ECE student at SCET and wanted to ask about internship possibilities.
+
+— Dhwanil Doshi, ECE (2nd year), SCET Surat",sent,2026-04-20T07:14:32.000Z,https://www.linkedin.com/in/justin-waugh-48b2391b2,Hi Justin just emailed you about Maritime Fusion's underwater power coupling work — the inductive transfer through seawater problem is fascinating. Would love to stay connected. — Dhwanil ECE student at SCET Surat,YES,"Maritime Fusion is developing contactless power transfer technology for underwater vehicles. Our patented inductive coupling system maintains 94% transfer efficiency at depths up to 300m enabling continuous operation of ROVs without surface tethers...",2026-04-15T06:00:00.000Z,2026-04-17T06:45:12.000Z,NO,Sent Version A. Strong technical opener. Will follow up on LinkedIn.

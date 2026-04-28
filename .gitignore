@@ -1,0 +1,74 @@
+# ═══════════════════════════════════════════════════════════════
+# CRITICAL — Runtime data with API keys, OAuth tokens, secrets
+# DO NOT REMOVE THESE LINES UNDER ANY CIRCUMSTANCES
+# ═══════════════════════════════════════════════════════════════
+
+# Runtime folders (catch any name, any depth)
+N8N_runtime/
+**/N8N_runtime/
+**/.n8n/
+**/.n8n-files/
+**/.n8n_data/
+**/N8N_private/
+
+# Database files (n8n SQLite + journal)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+*.db
+
+# Environment + secrets
+.env
+.env.*
+*.env
+config
+encryptionKey
+*.key
+*.pem
+credentials.json
+service-account*.json
+oauth-token*.json
+
+# n8n logs
+n8nEventLog*.log
+*.log
+
+# Personal files
+*.pdf
+master_resume.txt
+Dhwanil_Doshi_Resume*.pdf
+resume*.pdf
+
+# Live spreadsheet data
+Internship_Outreach*.xlsx
+*.xlsx
+*.xls
+
+# Build / dev junk
+node_modules/
+dist/
+build/
+.cache/
+.next/
+.parcel-cache/
+
+# OS files (Windows + Mac + OneDrive)
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup originals
+*_real.json
+*_original.json
+*_backup.json
+*.bak

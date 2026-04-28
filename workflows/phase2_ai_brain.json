@@ -1,0 +1,216 @@
+{
+  "name": "Phase 2 — AI Brain (OpenAI GPT-4o, A/B Versions)",
+  "nodes": [
+    {
+      "id": "p2-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [100, 300],
+      "parameters": {}
+    },
+    {
+      "id": "p2-read-sheet",
+      "name": "Read All Sheet Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [320, 300],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Internship_Outreach",
+          "mode": "name"
+        },
+        "filtersUI": {},
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "p2-filter",
+      "name": "Filter: Queued + Has Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst filtered = items.filter(item => {\n  const status = (item.json.reply_status || '').trim().toLowerCase();\n  const email  = (item.json.email || '').trim();\n  return status === 'queued' && email !== '';\n});\nconsole.log(`[Filter] ${items.length} total → ${filtered.length} queued with email`);\nif (filtered.length === 0) return [];\nreturn filtered;"
+      }
+    },
+    {
+      "id": "p2-split",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [760, 300],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "p2-wait",
+      "name": "Wait 4s (OpenAI Rate Limit)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [980, 300],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 4,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "p2-scrape",
+      "name": "Scrape Company Website",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 300],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "GET",
+        "url": "=https://{{ $json.website }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "p2-build-prompt",
+      "name": "Build OpenAI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1420, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Full prompt is documented in prompts/phase2_email_prompt.md\n// This is the production prompt that generates Version A (professional with bullets)\n// and Version B (casual punchy) per company.\n\nconst item = $('Split In Batches').item.json;\nconst websiteHtml = ($json.data || $json.body || '').toString();\n\n// Strip HTML to clean text\nconst cleanText = websiteHtml\n  .replace(/<script[\\s\\S]*?<\\/script>/gi, '')\n  .replace(/<style[\\s\\S]*?<\\/style>/gi, '')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim()\n  .substring(0, 3000);\n\nconst contactFirst = (item.contact_name || '').split(' ')[0].trim() || '';\nconst companyName  = item.company_name || 'Unknown Company';\nconst ycDescription = item.description || '';\n\n// NOTE: Full 200+ line prompt in prompts/phase2_email_prompt.md\n// Below is the abbreviated version. Replace with full prompt for production.\nconst p = [];\np.push('You write cold emails AS Dhwanil Doshi, a 21-year-old engineering student at Sarvajanik College of Engineering and Technology (SCET), Surat. Generate TWO versions per company.');\np.push('');\np.push('TARGET COMPANY:');\np.push('Name: ' + companyName);\np.push('YC pitch: ' + ycDescription);\np.push('Founder first name: ' + (contactFirst || '[NO NAME]'));\np.push('Website content: ' + cleanText);\np.push('');\np.push('RULES:');\np.push('1. ALWAYS open with \"Hi [FirstName],\" — never \"Dear\", never \"Hii\". If no name, use \"Hi ' + companyName + ' team,\"');\np.push('2. Banned: revolutionary, cutting-edge, leveraging, synergy, paradigm, holistic, ecosystem, journey, unlock, empower, innovative, transforming, exciting, thrilled, opportunity');\np.push('3. Reference SPECIFIC details from the website');\np.push('4. Match Dhwanil\\'s projects to company domain: AI/data → Skilleton (3-agent pipeline, won DA-IICT 2100 teams). Frontend → CampusTwn (Three.js, 200+ users). Hardware → ESP32-C3 stress glove (90% accuracy, SIH 2025 finalist). Robotics → quadcopter + rover + FPGA. AI agents → JARVIS.');\np.push('');\np.push('VERSION A (professional, 200-280 words, bullets for technical companies, full signature with phone/email/LinkedIn).');\np.push('VERSION B (casual, 90-120 words, one personality line, signs off \"Best, Dhwanil\").');\np.push('');\np.push('Return ONLY this JSON:');\np.push('{\"role_type\": \"fullstack|ml|embedded|general\", \"resume_type\": \"tailored|master\", \"matched_project\": \"A|B|C|D|E\", \"email_subject_A\": \"...\", \"email_body_A\": \"...\", \"email_subject_B\": \"...\", \"email_body_B\": \"...\"}');\n\nconst promptText = p.join('\\n');\n\nreturn {\n  json: {\n    ...item,\n    _ai_request: {\n      model: 'gpt-4o',\n      messages: [\n        { role: 'system', content: 'You write cold emails for a confident technical 21-year-old engineering student. You hate buzzwords. Return only valid JSON.' },\n        { role: 'user', content: promptText }\n      ],\n      temperature: 0.9,\n      max_tokens: 2500,\n      response_format: { type: 'json_object' }\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "p2-call-openai",
+      "name": "Call OpenAI API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1640, 300],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_OPENAI_API_KEY" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json._ai_request }}",
+        "options": { "timeout": 60000 }
+      }
+    },
+    {
+      "id": "p2-parse",
+      "name": "Parse OpenAI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1860, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const response = $json;\nconst company = $('Split In Batches').item.json;\n\nconst rawText = (response?.choices?.[0]?.message?.content || '').trim();\n\nlet jsonStr = rawText\n  .replace(/^```(?:json)?\\s*/i, '')\n  .replace(/\\s*```$/i, '')\n  .trim();\n\nconst objMatch = jsonStr.match(/\\{[\\s\\S]*\\}/);\nif (objMatch) jsonStr = objMatch[0];\n\nlet parsed = {};\ntry {\n  parsed = JSON.parse(jsonStr);\n} catch (e) {\n  console.error('[Parse] Failed: ' + jsonStr.substring(0, 200));\n  parsed = {\n    role_type: 'general', resume_type: 'master', matched_project: '',\n    email_subject_A: 'Summer intern — ' + (company.company_name || ''),\n    email_body_A: '[AI parse error — review manually]',\n    email_subject_B: 'Summer intern — ' + (company.company_name || ''),\n    email_body_B: '[AI parse error — review manually]'\n  };\n}\n\n// Helper: convert escaped \\n to real newlines, prevent formula injection\nconst clean = (str, max) => {\n  if (!str) return '';\n  let s = str.replace(/\\\\n/g, '\\n').replace(/\\\\\"/g, '\"').trim().substring(0, max);\n  if (['=','+','-','@'].includes(s[0])) s = \"'\" + s;\n  return s;\n};\n\nconst validRoles = ['fullstack', 'ml', 'embedded', 'general'];\nconst validResume = ['tailored', 'master'];\nconst validProjects = ['A', 'B', 'C', 'D', 'E'];\n\nreturn {\n  json: {\n    email: company.email || '',\n    company_name: company.company_name || '',\n    role_type: validRoles.includes((parsed.role_type || '').toLowerCase()) ? parsed.role_type.toLowerCase() : 'general',\n    resume_type: validResume.includes((parsed.resume_type || '').toLowerCase()) ? parsed.resume_type.toLowerCase() : 'master',\n    matched_project: validProjects.includes((parsed.matched_project || '').toUpperCase()) ? parsed.matched_project.toUpperCase() : '',\n    email_subject_A: clean(parsed.email_subject_A, 80),\n    email_body_A: clean(parsed.email_body_A, 2000),\n    email_subject_B: clean(parsed.email_subject_B, 80),\n    email_body_B: clean(parsed.email_body_B, 2000),\n    reply_status: 'drafted'\n  }\n};"
+      }
+    },
+    {
+      "id": "p2-update",
+      "name": "Update Sheet Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2080, 300],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Internship_Outreach",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "email": "={{ $json.email }}",
+            "role_type": "={{ $json.role_type }}",
+            "resume_type": "={{ $json.resume_type }}",
+            "email_subject_A": "={{ $json.email_subject_A }}",
+            "email_body_A": "={{ $json.email_body_A }}",
+            "email_subject_B": "={{ $json.email_subject_B }}",
+            "email_body_B": "={{ $json.email_body_B }}",
+            "reply_status": "={{ $json.reply_status }}"
+          },
+          "matchingColumns": ["email"]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": { "main": [[{ "node": "Read All Sheet Rows", "type": "main", "index": 0 }]] },
+    "Read All Sheet Rows": { "main": [[{ "node": "Filter: Queued + Has Email", "type": "main", "index": 0 }]] },
+    "Filter: Queued + Has Email": { "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]] },
+    "Split In Batches": {
+      "main": [
+        [{ "node": "Wait 4s (OpenAI Rate Limit)", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Wait 4s (OpenAI Rate Limit)": { "main": [[{ "node": "Scrape Company Website", "type": "main", "index": 0 }]] },
+    "Scrape Company Website": { "main": [[{ "node": "Build OpenAI Prompt", "type": "main", "index": 0 }]] },
+    "Build OpenAI Prompt": { "main": [[{ "node": "Call OpenAI API", "type": "main", "index": 0 }]] },
+    "Call OpenAI API": { "main": [[{ "node": "Parse OpenAI Response", "type": "main", "index": 0 }]] },
+    "Parse OpenAI Response": { "main": [[{ "node": "Update Sheet Row", "type": "main", "index": 0 }]] },
+    "Update Sheet Row": { "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "id": "phase2-ai-brain-v2"
+}
